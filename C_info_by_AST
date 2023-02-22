@@ -1,0 +1,352 @@
+def main():
+    # 存放函数的调用信息
+    func_call_dict = {}
+    # 存放函数所在源文件路径
+    func_location_dict = {}
+    # 存放所有差异函数名
+    hard_function_name_list = []
+    # 存放所有.c文件的路径
+    py_file_path_list = []
+    # 所有switch分支
+    split_switch_list = []
+    #
+    switch_num = 0
+    # 输入文件夹路径，判断路径是否存在
+    file_path = input("请输入工程路径: \n")
+    while not os.path.isdir(file_path):
+        print("路径不存在,请检查")
+        file_path = input("请输入路径路径: \n")
+    hard_function_search(hard_function_name_list)
+    # 存储工程名
+    software_name = "Soft:" + os.path.basename(file_path)
+    # 存储工程路径
+    software_path = file_path
+    read_files(file_path, py_file_path_list)
+    # 处理switch+if的情况
+    for py_file_path in py_file_path_list:
+        split_switch_list.extend(split_switch_from_if(py_file_path, switch_num))
+    func_location_from_DB = get_data_from_DB()
+    get_func_info(py_file_path_list, func_call_dict, func_location_dict)
+    print(func_call_dict)
+    print(func_location_dict)
+    # 清空上一次操作中提取的所有json文件
+    del_file("json")
+    # 遍历所有主函数
+    for main_func_name in func_call_dict.keys():
+        # 判断主函数内部是否存在函数调用
+        if func_call_dict.get(main_func_name):
+            # 判断主函数是否为硬件差异函数
+            if main_func_name not in hard_function_name_list:
+                hard_function_judge = "no"
+                save_hard_func_info(main_func_name, func_call_dict, func_location_dict,
+                                    hard_function_name_list, software_name, software_path, hard_function_judge,
+                                    func_location_from_DB, split_switch_list)
+            else:
+                hard_function_judge = "yes"
+                save_hard_func_info(main_func_name, func_call_dict, func_location_dict,
+                                    hard_function_name_list, software_name, software_path, hard_function_judge,
+                                    func_location_from_DB, split_switch_list)
+
+
+def del_file(path_data):
+    """
+    删除文件夹下所有文件
+    :param path_data:   文件夹路径，绝对路径
+    """
+    for i in os.listdir(path_data):  # os.listdir(path_data)#返回一个列表，里面是当前目录下面的所有东西的相对路径
+        file_data = path_data + "\\" + i  # 当前文件夹的下面的所有东西的绝对路径
+        if os.path.isfile(file_data):  # os.path.isfile判断是否为文件,如果是文件,就删除.如果是文件夹.递归给del_file.
+            os.remove(file_data)
+        else:
+            del_file(file_data)
+
+
+def save_hard_func_info(main_func_name, func_call_dict, func_location_dict, hard_function_name_list, software_name,
+                        software_path, hard_function_judge, func_location_from_DB, split_switch_list):
+    """
+    保存硬件差异函数信息
+    :param hard_function_judge: 判断是否为硬件差异函数
+    :param main_func_name: 当前主函数名
+    :param func_call_dict: 存放函数的调用信息
+    :param func_location_dict: 存放的函数所在源文件路径
+    :param hard_function_name_list: 存放的所有差异函数名
+    :param software_name: 工程名
+    :param software_path: 工程路径
+    :param func_location_from_DB: 从数据库中获取的函数路径
+    :param split_switch_list:
+
+    """
+
+    # 当前检索的硬件差异函数内调用的非硬件差异函数名称
+    call_normal_function_name = []
+    # 当前检索的硬件差异函数内调用的非硬件差异函数路径
+    call_normal_function_path = []
+    # 当前检索的硬件差异函数内调用的硬件差异函数名称
+    call_hard_function_name = []
+    # 当前检索的硬件差异函数内调用的硬件差异函数路径
+    call_hard_function_path = []
+    # 当前检索的硬件差异函数内，pathstatement内使用的宏定义
+    use_macrodef_name = []
+    # 当前检索的硬件差异函数内，pathstatement内使用的全局变量
+    use_globalvar_name = []
+    # 所有指定的的宏定义和全局变量
+    macrodef_name, globalvar_name = macrodef_globalvar_search()
+    # 硬件差异函数所在的源文件名称
+    source_name = "SF:" + os.path.basename(func_location_dict.get(main_func_name)) + ";" + software_name
+    # 硬件差异函数所在的源文件路径
+    source_path = func_location_dict.get(main_func_name)
+    # 当前检索的硬件差异函数名称
+    function_name = main_func_name + ";" + source_name
+    # 判断是否存在函数调用得正则表达式
+    get_func_call_info_pattern = re.compile(r"(\w+)\s*\((.*)\)")
+    # 生成控制流图文件
+    C_to_CFG.create_CFG_txt(source_path)
+    # 通过控制流图生成路径集和每条路径中语句间的关系
+
+    real_path_list, relationship_list = path_create.real_path_create("tmp/" + os.path.basename(source_path)[:-2],
+                                                                     split_switch_list)
+    for path_statement_index, path_statement in enumerate(real_path_list):
+        if " " + main_func_name in path_statement[0]:
+            for single_path_index, single_path in enumerate(path_statement):
+                func_call_info = get_func_call_info_pattern.findall(single_path)
+                temp_single_path = single_path
+                # 判断是否存在函数调用
+                while "(" in temp_single_path and func_call_info.__len__() > 0:
+                    # 验证
+                    if func_call_info[0][0] in func_call_dict.keys():
+                        # 判断调用函数是否为硬件差异函数
+                        if func_call_info[0][0] not in hard_function_name_list:
+                            call_normal_function_name.append(
+                                str(single_path_index + 1) + ":" + func_call_info[0][0] + ";SF:"
+                                + os.path.basename(
+                                    func_location_dict.get(func_call_info[0][0])) + ";" + software_name)
+                            # call_normal_function_path.append(func_location_from_DB.get(func_call_info[0][0]))
+                            call_normal_function_path.append(
+                                str(single_path_index + 1) + ":" + func_location_dict.get(func_call_info[0][0]))
+                        else:
+                            call_hard_function_name.append(
+                                str(single_path_index + 1) + ":" + func_call_info[0][0] + ";SF:"
+                                + os.path.basename(
+                                    func_location_dict.get(func_call_info[0][0])) + ";" + software_name)
+                            # call_hard_function_path.append(func_location_from_DB.get(func_call_info[0][0]))
+                            call_hard_function_path.append(
+                                str(single_path_index + 1) + ":" + func_location_dict.get(func_call_info[0][0]))
+                    temp_single_path = temp_single_path[temp_single_path.index("(") + 1:]
+                    func_call_info = get_func_call_info_pattern.findall(temp_single_path)
+                for single_macrodef_name in macrodef_name.keys():
+                    find_macrodef_name_pattern = re.compile(r"\W+(" + single_macrodef_name + r")\W+")
+                    temp_single_path = " " + single_path + " "
+                    result_data = find_macrodef_name_pattern.findall(
+                        temp_single_path)  # ' IF:if(FEI_DOPAPI_OAM_IsPDTA() == VOS_TRUE) '
+                    if result_data.__len__() > 0:
+                        use_macrodef_name.append(
+                            str(single_path_index + 1) + ":" + macrodef_name.get(single_macrodef_name))
+                    # if single_macrodef_name in single_path:
+                    #     use_macrodef_name.append(str(single_path_index + 1) + ":" + single_macrodef_name))
+                for single_globalvar_name in globalvar_name:
+                    if single_globalvar_name in single_path:
+                        use_globalvar_name.append(str(single_path_index + 1) + ":" + single_globalvar_name)
+            # 将信息保存为json文件
+            json_save(main_func_name, path_statement_index, hard_function_judge, software_name, software_path,
+                      source_name, source_path, function_name, path_statement, relationship_list, call_normal_function_name,
+                      call_normal_function_path, call_hard_function_name, call_hard_function_path, use_macrodef_name,
+                      use_globalvar_name)
+
+
+def json_save(main_func_name, path_statement_index, hard_function_judge, software_name, software_path, source_name,
+              source_path, function_name, path_statement, relationship_list, call_normal_function_name,
+              call_normal_function_path, call_hard_function_name, call_hard_function_path, use_macrodef_name,
+              use_globalvar_name):
+    hard_point_dict = hard_point_info()
+    for hard_point_dict_key in hard_point_dict.keys():
+        for single_path_statement_index, single_path_statement in enumerate(path_statement):
+            temp_str = hard_point_dict_key[:hard_point_dict_key.index("->") - 2] + hard_point_dict_key[-1] + "()"
+            if temp_str in single_path_statement:
+                single_path_statement = single_path_statement.replace(hard_point_dict_key[:hard_point_dict_key.index("->") - 2], hard_point_dict_key[:-1])
+                path_statement[single_path_statement_index] = single_path_statement
+    with open('json/' + main_func_name + "_" + str(path_statement_index + 1) + '.json', 'a',
+              encoding='utf-8') as json_file:
+        kgdata = defaultdict(list)
+        kgdata["hardfunction"] = hard_function_judge
+        kgdata["softwarename"] = software_name
+        kgdata["softwarepath"] = software_path
+        kgdata["sourcename"] = source_name
+        kgdata["sourcepath"] = source_path
+        kgdata["functionname"] = function_name
+        kgdata["pathstatement"] = path_statement
+        kgdata["relationship"] = relationship_list[path_statement_index]
+        kgdata["callnormalfunctionname"] = call_normal_function_name
+        kgdata["callnormalfunctionpath"] = call_normal_function_path
+        kgdata["callhardfunctionname"] = call_hard_function_name
+        kgdata["callhardfunctionpath"] = call_hard_function_path
+        kgdata["usemacrodefname"] = use_macrodef_name
+        kgdata["useglobalvarname"] = use_globalvar_name
+
+        json_str = json.dumps(kgdata, ensure_ascii=False)
+        json_file.write(json_str + "\n")
+    call_normal_function_name.clear()
+    call_normal_function_path.clear()
+    call_hard_function_name.clear()
+    call_hard_function_path.clear()
+    use_macrodef_name.clear()
+    use_globalvar_name.clear()
+
+
+def macrodef_globalvar_search():
+    macrodef_name = {}
+    globalvar_name = []
+    macrodef_name[r"bom1"] = "BOM"
+    macrodef_name[r"bom2"] = "BOM"
+    macrodef_name[r"bom3"] = "BOM"
+    macrodef_name[r"bom4"] = "BOM"
+    macrodef_name[r"TYPEA_HARD_1_1"] = "HARDTYPE1"
+    macrodef_name[r"TYPEA_HARD_1_2"] = "HARDTYPE1"
+    macrodef_name[r"TYPEA_HARD_1_3"] = "HARDTYPE1"
+    macrodef_name[r"TYPEA_HARD_1_4"] = "HARDTYPE1"
+    macrodef_name[r"TYPEA_HARD_2_1"] = "HARDTYPE2"
+    macrodef_name[r"TYPEA_HARD_2_2"] = "HARDTYPE2"
+    macrodef_name[r"TYPEA_HARD_2_3"] = "HARDTYPE2"
+    macrodef_name[r"TYPEA_HARD_2_4"] = "HARDTYPE2"
+    macrodef_name[r"TYPEA_HARD_3_1"] = "HARDTYPE3"
+    macrodef_name[r"TYPEA_HARD_3_2"] = "HARDTYPE3"
+    macrodef_name[r"TYPEA_HARD_3_3"] = "HARDTYPE3"
+    macrodef_name[r"TYPEA_HARD_3_4"] = "HARDTYPE3"
+    macrodef_name[r"TYPEC_HARD_1_1"] = "BOARDTYPE1"
+    macrodef_name[r"TYPEC_HARD_1_2"] = "BOARDTYPE1"
+    macrodef_name[r"TYPEC_HARD_1_3"] = "BOARDTYPE1"
+    macrodef_name[r"TYPEC_HARD_1_4"] = "BOARDTYPE1"
+    macrodef_name[r"TYPEC_HARD_1_5"] = "BOARDTYPE1"
+    macrodef_name[r"TYPEC_HARD_1_6"] = "BOARDTYPE1"
+    macrodef_name[r"TYPEC_HARD_2_1"] = "BOARDTYPE2"
+    macrodef_name[r"TYPEC_HARD_2_2"] = "BOARDTYPE2"
+    macrodef_name[r"TYPEC_HARD_2_3"] = "BOARDTYPE2"
+    macrodef_name[r"TYPEC_HARD_3_1"] = "BOARDTYPE3"
+    macrodef_name[r"TYPEC_HARD_3_2"] = "BOARDTYPE3"
+    macrodef_name[r"TYPEC_HARD_3_3"] = "BOARDTYPE3"
+    macrodef_name[r"WM_BIT_1"] = "WM_BIT"
+    macrodef_name[r"WM_BIT_2"] = "WM_BIT"
+    macrodef_name[r"WM_BIT_3"] = "WM_BIT"
+    macrodef_name[r"isSptfun1"] = "CAPABILITY_BIT_MAP"
+    macrodef_name[r"isSptfun2"] = "CAPABILITY_BIT_MAP"
+    macrodef_name[r"isSptfun3"] = "CAPABILITY_BIT_MAP"
+    macrodef_name[r"SUPPORT_CFG_A"] = "RRM_MODULE_SOFT()->function1"
+    macrodef_name[r"SUPPORT_CFG_B"] = "RRM_MODULE_SOFT()->function2"
+    macrodef_name[r"SUPPORT_CFG_C"] = "RRM_MODULE_SOFT()->function3"
+    # globalvar_name.append("npType")
+    return macrodef_name, globalvar_name
+
+
+def hard_function_search(hard_function_name):
+    """
+    读取所有硬件差异函数名并存放
+    :param hard_function_name: 存放所有差异函数名
+    """
+    hard_function_name.append("VerifyBrdType")
+    hard_function_name.append("Gethardtype")
+    hard_function_name.append("GetBoardType1")
+    hard_function_name.append("GetBoardType1")
+    hard_function_name.append("GetBoardType1")
+    hard_function_name.append("GetBoardType1")
+    hard_function_name.append("RCM")
+    hard_function_name.append("GetAbility")
+    hard_function_name.append("GetBrdCpuNum")
+    hard_function_name.append("GetTxFreq")
+
+
+#存放硬件相关的“->”表示的指针信息
+def hard_point_info():
+    hard_point_dict = {}
+    hard_point_dict["RCM()->isSptfunc1"] = "HARDTYPE1"
+    hard_point_dict["RCM()->isSptfunc2"] = "HARDTYPE1"
+    hard_point_dict["RRM_MODULE_SOFT()->function1"] = "HARDTYPE3"
+    return hard_point_dict
+
+
+def get_func_info(py_file_path_list, func_call_dict, func_location_dict):
+    """
+    获取所有函数的调用信息和所在源文件路径
+    :param py_file_path_list: 存放的所有.c文件的路径
+    :param func_call_dict: 存放的函数的调用信息
+    :param func_location_dict: 存放的函数所在源文件路径
+
+    """
+
+    for py_file_path in py_file_path_list:
+        # 生成AST文件
+        text_path = AST_test.create_AST_txt(py_file_path)
+        # 从AST文件中获取所有函数调用信息
+        temp_func_call_dict = get_function_call_info.save_function_call_info(text_path)
+        func_call_dict.update(temp_func_call_dict)
+        for func_name in temp_func_call_dict.keys():
+            # 保存所有函数的所在源文件的路径
+            func_location_dict[func_name] = py_file_path
+
+
+def get_data_from_DB():
+    conn = connect(host='localhost', port=3306, user='root', password='123456', database='function_info_search',
+                   charset='utf8')
+    csl = conn.cursor()
+    count = csl.execute('SELECT * FROM function_info')
+    all_msgs = {}
+    for i in range(count):
+        select_result = csl.fetchone()
+        all_msgs[select_result[0]] = select_result[1]
+    return all_msgs
+
+
+def read_files(path, py_file_path_list):
+    """
+    读取目标工程文件夹下（包括子目录下）所有.c文件，并获取其路径
+    :param path: 输入的文件夹路径
+    :param py_file_path_list: 存放的所有.c文件的路径
+    """
+
+    for file in os.listdir(path):
+        file_path = os.path.join(path, file)
+        # 若路径下存在子目录，则继续使用递归继续读取
+        if os.path.isdir(file_path):
+            read_files(file_path, py_file_path_list)
+        # 根据文件扩展名判断并获取.c文件
+        elif os.path.splitext(file_path)[1] == '.c':
+            # 存放符合要求文件的路径
+            py_file_path_list.append(file_path)
+
+
+def split_switch_from_if(py_file_path, switch_num):
+    # 新文件字符串
+    new_file_data = ""
+    # switch内部语句
+    switch_data = ""
+    new_switch_function = ""
+    switch_lock = 0
+    split_switch_list = []
+    hard_point_dict = hard_point_info()
+    get_switch_pattern = re.compile(r"\W+(switch)\s*\(.*\)")
+    with open(py_file_path, "r", encoding="utf-8") as file_name:
+        for line in file_name:
+            line = " " + line
+            for hard_point_dict_key in hard_point_dict.keys():
+                if hard_point_dict_key in line:
+                    line = line.replace(hard_point_dict_key, hard_point_dict_key[:hard_point_dict_key.index("->") - 2] + hard_point_dict_key[-1] + "()")
+            if get_switch_pattern.findall(line).__len__() > 0 and switch_lock == 0:
+                switch_lock = 1
+                switch_num += 1
+            if switch_lock == 1:
+                switch_data += line[1:]
+                new_file_data += ""
+            else:
+                new_file_data += line
+            if "}" in line and switch_lock == 1:
+                switch_lock = 0
+                new_file_data += "switch_" + str(switch_num) + "();" + "\n"
+                new_switch_function += "int switch_" + str(switch_num) + "(){" + "\n" + switch_data + "\n" + "}"
+                split_switch_list.append("switch_" + str(switch_num))
+                switch_num += 1
+        new_file_data += new_switch_function
+    with open(py_file_path, "w", encoding="utf-8") as file_name:
+        file_name.write(new_file_data)
+    return split_switch_list
+
+
+if __name__ == "__main__":
+    main()
