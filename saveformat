@@ -1,0 +1,33 @@
+# AST
+file_number = 1
+json_file=open('medical' + str(file_number) + '.json', 'a',encoding='utf-8')
+file_number += 1
+kgdata = defaultdict(list)
+kgdata["projectname"]="M:ProjectPython"
+kgdata["projectpath"]="C:/Users/baica/Desktop/ProjectPython"
+kgdata["sourcename"]="SF:module2nd.py;M:ProjectPython"
+kgdata["sourcepath"]="C:/Users/baica/Desktop/ProjectPython/module2nd.py"
+kgdata["classname"]="C:feel;SF:module2nd.py;M:ProjectPython"
+kgdata["inheritclassname"]=[ ]
+kgdata["inheritclasspath"]=[ ]
+kgdata["inlinefunctionname"]=["F:listen;C:feel;SF:module2nd.py;M:ProjectPython","F:watch;C:feel;SF:module2nd.py;M:ProjectPython", "F:taste;C:feel;SF:module2nd.py;M:ProjectPython"]
+
+json_str = json.dumps(kgdata,ensure_ascii=False)
+json_file.write(json_str+"\n")
+json_file.close()
+
+json_file=open('medical' + str(file_number) + '.json', 'a',encoding='utf-8')
+file_number += 1
+kgdata = defaultdict(list)
+kgdata["projectname"]="M:ProjectPython"
+kgdata["projectpath"]="C:/Users/baica/Desktop/ProjectPython"
+kgdata["sourcename"]="SF:module2nd.py;M:ProjectPython"
+kgdata["sourcepath"]="C:/Users/baica/Desktop/ProjectPython/module2nd.py"
+kgdata["classname"]="C:feel;SF:module2nd.py;M:ProjectPython"
+kgdata["inheritclassname"]=[ ]
+kgdata["inheritclasspath"]=[ ]
+kgdata["inlinefunctionname"]=["F:listen;C:feel;SF:module2nd.py;M:ProjectPython"]
+
+json_str = json.dumps(kgdata,ensure_ascii=False)
+json_file.write(json_str+"\n")
+json_file.close()
