@@ -1,0 +1,693 @@
+# AST
+def main():
+    savefile = open("methodinfo.txt", "w", encoding='utf-8')
+    pattern1 = re.compile(r"(\w+)\s(\*?)(\w+)\s*\(.*\)")  # 提取函数定义行     # TODO: static等情况  yacc库 词法分析
+    pattern2 = re.compile(r"(\w+)\s*\(.*\)")  # 提取调用函数的正则表达式
+    bodylistname = []  # 存放所有.c文件的路径
+    headlistname = []  # 存放所有.h文件的路径
+    functioninfo = {}  # 存放函数信息
+    callnormalfunctionname = []  # 当前检索的非硬件差异函数内调用的非硬件差异函数名称
+    callnormalfunctionpath = []  # 当前检索的非硬件差异函数内调用的非硬件差异函数路径
+    callhardfunctionname = []  # 当前检索的非硬件差异函数内调用的硬件差异函数名称
+    callhardfunctionpath = []  # 当前检索的非硬件差异函数内调用的硬件差异函数路径
+    returntypelist = []  # 存放所有返回值类型（包括自定义返回值类型）
+    functionname = ""  # 当前读取函数的函数名
+    hardfunctionname = []  # 存放所有差异函数名
+    callfunctionlist = []  # 用于去重
+    macrodef_name = []  # 存放所有宏定义
+    globalvar_name = []  # 存放所有全局变量
+    usemacrodefname = []  # 存放当前检索的硬件差异函数内，pathstatement内使用的宏定义
+    useglobalvarname = []  # 存放当前检索的硬件差异函数内，pathstatement内使用的全局变量
+    # 输入文件判断
+    filePath = input("请输入工程路径: \n")
+    while not os.path.isdir(filePath):
+        print("路径不存在,请检查")
+        filePath = input("请输入路径路径: \n")
+    time_start = time.time()  # 开始计时
+    projectname = "Soft:" + os.path.basename(filePath)  # 存储工程名
+    projectpath = filePath  # 存储工程路径
+    readfiles(filePath, bodylistname, headlistname)
+    returntypesearch(bodylistname + headlistname, returntypelist)
+    hardfunctionsearch(hardfunctionname)
+    macrodef_globalvar_search(macrodef_name, globalvar_name)
+    functionsearch(bodylistname, functioninfo, returntypelist)
+    for pyFilePath in bodylistname:
+        i = 0  # 记录当前"{}"是否成对
+        path_i = [0]  # 记录分支语句内"{}"是否成对（包括嵌套的分支）(可扩充)
+        floorblock_level = [0]  # 当前层块的分支号(可扩充)
+        path_dict = {}  # 存放分层分块后路径的动态多维数组
+        path_list = []  # 存放所有划分好的路径
+        floornumber_list = [1, 1]  # 按路径分支号划分路径时的起始位置
+        pathnumber_list = []  # 存放所有路径分支号
+        basepath = ""  # 用于存放除if、switch的分支路径外的所有路径
+        endpath = ""
+        pathstatement = []
+        functionjudge = "no"  # 判断当前函数是否为差异函数，”yes“为差异函数，”no“为非差异函数
+        temp_path_list = []
+        no_return_list = []  # 存放没有return的最小路径块
+        no_return_list_dict = {}  #
+        relationship = []  # 存放一条基本路径内的每一条语句之间的关联关系
+        block_info = ""  # 存放block信息
+        # 当读取到新文件时，将前一个文件的读取信息清空
+        callnormalfunctionname.clear()
+        callnormalfunctionpath.clear()
+        callhardfunctionname.clear()
+        callhardfunctionpath.clear()
+        sourcename = "SF:" + os.path.basename(pyFilePath) + ";" + projectname  # 存储源文件名
+        sourcepath = pyFilePath  # 存储源文件路径
+        contents = read(pyFilePath)  # 读取文件内容
+        for content in contents:
+            if "//" in content:  # TODO:考虑/* */
+                content = content[:content.index("//")]
+            if "{" in content:
+                i += 1
+            if "}" in content:
+                i -= 1
+            # 通过正则表达式获取列表中符合要求的行
+            method_info = pattern1.findall(content)
+            callfunction_info = pattern2.findall(content)
+            if method_info.__len__() > 0:  # 若字符串长度不为0，则代表读取到新函数
+                if method_info[0][0] in returntypelist:
+                    if method_info[0][2] not in hardfunctionname:
+                        functionname = "NF:" + method_info[0][2] + ";" + sourcename  # 存放当前函数名
+                    else:
+                        functionjudge = "yes"
+                        functionname = "HF:" + method_info[0][2] + ";" + sourcename  # 存放当前函数名
+            if functionjudge == "no":
+                if callfunction_info.__len__() > 0:  # 若字符串长度不为0，则代表获取到了可能是调用函数的信息
+                    if i != 0:
+                        # 对型如if(fish()>0)的格式进行判断
+                        content2 = content
+                        while "(" in content2 and callfunction_info.__len__() > 0:
+                            if functionincall(callfunction_info[0], functioninfo):  # 函数调用判断
+                                if callfunction_info[0] not in callfunctionlist:  # 去重
+                                    if callfunction_info[0] not in hardfunctionname:  # 非硬件差异函数内调用的非硬件差异函数
+                                        callfunctionlist.append(callfunction_info[0])
+                                        callnormalfunctionname.append(
+                                            "NF:" + callfunction_info[0] + ";SF:" + os.path.basename(
+                                                functioninfo.get(callfunction_info[0])) + ";" + projectname)
+                                        callnormalfunctionpath.append(functioninfo.get(callfunction_info[0]))
+                                    else:  # 非硬件差异函数内调用的硬件差异函数
+                                        callfunctionlist.append(callfunction_info[0])
+                                        callhardfunctionname.append(
+                                            "HF:" + callfunction_info[0] + ";SF:" + os.path.basename(
+                                                functioninfo.get(callfunction_info[0])) + ";" + projectname)
+                                        callhardfunctionpath.append(functioninfo.get(callfunction_info[0]))
+                            content2 = content2[content2.index("(") + 1:]
+                            callfunction_info = pattern2.findall(content2)
+                if i == 0 and (
+                        callnormalfunctionname.__len__() > 0 or callhardfunctionname.__len__() > 0) and functionname != "":  # 判断当前函数分析结束且存在调用关系
+                    savefile.write("kgdata =defaultdict(list)" + '\n'
+                                   + "kgdata[\"hardfunction\"] =\"" + functionjudge + '\"' + '\n'
+                                   + "kgdata[\"softwarename\"] =\"" + projectname + '\"' + '\n'
+                                   + "kgdata[\"softwarepath\"] =\"" + projectpath + '\"' + '\n'
+                                   + "kgdata[\"sourcename\"] =\"" + sourcename + '\"' + '\n'
+                                   + "kgdata[\"sourcepath\"] =\"" + sourcepath + '\"' + '\n'
+                                   + "kgdata[\"functionname\"] =\"" + functionname + '\"' + '\n'
+                                   + "kgdata[\"callnormalfunctionname\"] =" + str(callnormalfunctionname) + '\n'
+                                   + "kgdata[\"callnormalfunctionpath\"] =" + str(callnormalfunctionpath) + '\n'
+                                   + "kgdata[\"callhardfunctionname\"] =" + str(callhardfunctionname) + '\n'
+                                   + "kgdata[\"callhardfunctionpath\"] =" + str(callhardfunctionpath) + '\n\n')
+                    functionname = ""
+                    callnormalfunctionname.clear()
+                    callnormalfunctionpath.clear()
+                    callhardfunctionname.clear()
+                    callhardfunctionpath.clear()
+                    callfunctionlist.clear()
+                    functionjudge = "no"
+            else:
+                #   if分支路径
+                if (("if(" in content or "if (" in content) and "else" not in content) or (
+                        "else if(" in content or "else if (" in content) or (
+                        "if(" not in content and "if (" not in content and "else" in content):  # 判断是否为分支语句，即判断分块的依据
+                    if (("if(" in content or "if (" in content) and "else" not in content) and path_i[
+                        floorblock_level[0]] == 0 and floorblock_level.__len__() > 1:
+                        floorblock_level[-1] += 1
+                    elif (("else if(" in content or "else if (" in content) or (
+                            "if(" not in content and "if (" not in content and "else" in content)) and path_i[
+                        floorblock_level[0]] != 0:
+                        floorblock_level[-1] += 1
+                    elif ("if(" in content or "if (" in content) and "else" not in content:  # 判断是否为if语句，即判断层级的依据
+                        if path_i[-1] != 0 or path_i.__len__() == 1:
+                            floorblock_level[0] += 1
+                            if floorblock_level.__len__() < floorblock_level[0] + 1:  # 层级每上升一层，分支号就扩充一位，“{}”记录列表也扩充一位
+                                floorblock_level.append(1)
+                                path_i.append(0)
+                elif "switch" in content or "case " in content or "default:" in content:
+                    pass
+                else:
+                    if basepath == "" and floorblock_level.__len__() == 1 and i != 0 and content.strip() != "{":
+                        basepath = content.strip()
+                    elif basepath != "" and floorblock_level.__len__() == 1 and i != 0:
+                        basepath = basepath + "@" + content.strip()
+                if floorblock_level[0] != 0:
+                    if "}" in content or "{" in content:
+                        if "}" in content:
+                            content = content.replace('}', '')
+                            if path_i[floorblock_level[0]] > 0:
+                                path_i[floorblock_level[0]] -= 1
+                            elif path_i[floorblock_level[0]] == 0:
+                                path_i = path_i[:-1]
+                                floorblock_level = floorblock_level[:-1]
+                                if floorblock_level.__len__() != 1:
+                                    if content.strip() != "":
+                                        floorblock_level[-1] += 1
+                                    floorblock_level[0] -= 1
+                                    path_i[floorblock_level[0]] -= 1
+                                else:
+                                    if basepath != "":
+                                        endpath = basepath
+                                    path_i = [0]
+                                    floorblock_level = [0]
+                                    for path_key in path_dict.keys():
+                                        if "@@" in path_dict[path_key]:
+                                            path_dict[path_key] = path_dict[path_key].replace("@@", "@")  # TODO:@@@
+                                        if path_dict[path_key][-1] == "@":
+                                            path_dict[path_key] = path_dict[path_key][:-1]
+                                        path_key_list = list(map(int, path_key.split(",")))
+                                        pathnumber_list.append(path_key_list)
+                                    print(path_dict)
+                                    print(pathnumber_list)
+                                    difffunction_path(pathnumber_list, path_list, floornumber_list, path_dict,
+                                                      temp_path_list, no_return_list)
+                                    print(path_list)
+                                    print(no_return_list)
+                                    print(endpath)
+                                    #   遍历提取的每一条路径
+                                    for single_path_list in path_list:
+                                        #   判断路径中是否存在不含return的块
+                                        inter = [i for i in no_return_list if i in single_path_list]
+                                        #   遍历一条路径中的每一个分支块
+                                        temp_list_index = 0
+                                        for temp_list_num, temp_list in enumerate(single_path_list):
+                                            if temp_list == single_path_list[-1]:
+                                                temp_list_index += 1
+                                            #   判断是否是路径链最后一块
+                                            if temp_list_num != single_path_list.__len__() - 1:
+                                                i = 0
+                                                #   首先存放非分支语句
+                                                while ("if" not in path_dict[int_to_str(temp_list)].split("@")[i]) and (
+                                                        "else" not in path_dict[int_to_str(temp_list)].split("@")[i]):
+                                                    relationship.append("control")
+                                                    pathstatement.append(path_dict[int_to_str(temp_list)].split("@")[i])
+                                                    i += 1
+                                                if single_path_list[temp_list_num].__len__() == single_path_list[temp_list_num + 1].__len__():
+                                                    if ("if (" in path_dict.get(int_to_str(single_path_list[temp_list_num + 1])).split("@")[0] or
+                                                            "if(" in path_dict.get(int_to_str(single_path_list[temp_list_num + 1])).split("@")[0]) and \
+                                                                "else" not in path_dict.get(int_to_str(single_path_list[temp_list_num + 1])).split("@")[0]:
+                                                        relationship.append("control")
+                                                    else:
+                                                        relationship.append("false")
+                                                elif single_path_list[temp_list_num].__len__() < single_path_list[temp_list_num + 1].__len__():
+                                                    relationship.append("true")
+                                                else:
+                                                    relationship.append("control")
+                                                #   存放分支语句
+                                                if temp_list_num == 0:
+                                                    # 第一个if
+                                                    block_info = "IF:"
+                                                elif temp_list.__len__() > single_path_list[temp_list_num - 1].__len__():
+                                                    # 升层if
+                                                    block_info = block_info[:-3]
+                                                    block_info = block_info + "TB:IF:"
+                                                elif temp_list.__len__() == single_path_list[temp_list_num - 1].__len__():
+                                                    # 同层if
+                                                    if "else if(" in path_dict.get(int_to_str(temp_list)).split("@")[0] or "else if (" in path_dict.get(int_to_str(temp_list)).split("@")[0]:
+                                                        block_info = block_info[:-3]
+                                                        block_info = block_info + "FB:IF:"
+                                                    elif "else" in path_dict.get(int_to_str(temp_list)).split("@")[0] and "if" not in path_dict.get(int_to_str(temp_list)).split("@")[0]:
+                                                        block_info = block_info[:-3]
+                                                        block_info = block_info + "FB:"
+                                                    else:
+                                                        block_info = block_info[:(-3 * (temp_list.__len__()))]
+                                                        block_info = block_info + "IF:"
+                                                elif temp_list.__len__() < single_path_list[temp_list_num - 1].__len__():
+                                                    # 降层if
+                                                    block_info = block_info[:-3]
+                                                    block_info = block_info + "IF:"
+                                                pathstatement.append(block_info + path_dict[int_to_str(temp_list)].split("@")[i])
+
+                                                #   记录不含return的块所在的位置
+                                                if temp_list in inter:
+                                                    no_return_list_dict[str(temp_list)[
+                                                                        str(temp_list).index("[") + 1:str(
+                                                                            temp_list).index("]")].replace(' ',
+                                                                                                           "")] = pathstatement.__len__() - 1
+                                            else:
+                                                if temp_list_index > 1:
+                                                    #   对当前if外的return的处理
+                                                    temp_list0 = list(temp_list)
+                                                    temp_list0.append(1)
+                                                    temp_list0[0] += 1
+                                                    temp_path_list2 = list(path_dict[int_to_str(temp_list)].split("@"))
+                                                    while temp_list0 in pathnumber_list:
+                                                        temp_path_list2 = [i for i in temp_path_list2 if
+                                                                           i not in path_dict[
+                                                                               int_to_str(temp_list0)].split("@")]
+                                                        temp_list0[-1] += 1
+                                                    judge_index = 0
+                                                    for temp_path_str_list in temp_path_list2:
+                                                        if judge_index == 1:
+                                                            relationship.append("control")
+                                                            pathstatement.append(temp_path_str_list)
+                                                        if (
+                                                                "if(" in temp_path_str_list or "if (" in temp_path_str_list) or "else" in temp_path_str_list:
+                                                            judge_index = 1
+                                                else:
+                                                    out_if_path_judge = 0
+                                                    for temp_list_num2, single_path in enumerate(path_dict[int_to_str(temp_list)].split("@")):
+                                                        # 针对类似于路径[1,1]的情况
+                                                        if temp_list_num == 0:
+                                                            if ("if" not in single_path) and ("else" not in single_path) and out_if_path_judge == 0:
+                                                                relationship.append("control")
+                                                            if ("if (" in single_path or "if(" in single_path) and ("else" not in single_path):
+                                                                relationship.append("true")
+                                                                block_info = "IF:"
+                                                                out_if_path_judge = 1
+                                                            elif out_if_path_judge == 1:
+                                                                block_info = "TB:"
+                                                                relationship.append("control")
+                                                        else:
+                                                            if temp_list_num2 == 0:
+                                                                if temp_list.__len__() > single_path_list[temp_list_num - 1].__len__():
+                                                                    # 升层if
+                                                                    block_info = block_info[:-3]
+                                                                    block_info = block_info + "TB:IF:"
+                                                                elif temp_list.__len__() == single_path_list[temp_list_num - 1].__len__():
+                                                                    # 同层if
+                                                                    if "else if(" in single_path or "else if (" in single_path:
+                                                                        block_info = block_info[:-3]
+                                                                        block_info = block_info + "FB:IF:"
+                                                                    elif "else" in single_path and "if" not in single_path:
+                                                                        block_info = block_info[:-3]
+                                                                        block_info = block_info + "FB:"
+                                                                    else:
+                                                                        block_info = block_info[:(-3 * (temp_list.__len__()))]
+                                                                        block_info = block_info + "IF:"
+                                                                elif temp_list.__len__() < single_path_list[temp_list_num - 1].__len__():
+                                                                    # 降层if
+                                                                    block_info = block_info[:-3]
+                                                                    block_info = block_info + "IF:"
+                                                            elif temp_list_num2 == 1:
+                                                                if "else" in path_dict[int_to_str(temp_list)].split("@")[0] and "if" not in path_dict[int_to_str(temp_list)].split("@")[0]:
+                                                                    pass
+                                                                else:
+                                                                    block_info = block_info[:-3]
+                                                                    block_info = block_info + "TB:"
+                                                                relationship.append("true")
+                                                            else:
+                                                                if "else" in path_dict[int_to_str(temp_list)].split("@")[0] and "if" not in path_dict[int_to_str(temp_list)].split("@")[0]:
+                                                                    pass
+                                                                else:
+                                                                    block_info = block_info[:-3]
+                                                                    block_info = block_info + "TB:"
+                                                                relationship.append("control")
+                                                        pathstatement.append(block_info + single_path)
+                                        block_info = ""
+                                        print(pathstatement)
+                                        for i, temp_statement in enumerate(pathstatement):
+                                            #   非硬件函数以及硬件函数调用信息的提取
+                                            callfunction_info2 = pattern2.findall(temp_statement)
+                                            if callfunction_info2.__len__() != 0:
+                                                temp_statement2 = temp_statement
+                                                while "(" in temp_statement2 and callfunction_info2.__len__() > 0:
+                                                    if functionincall(callfunction_info2[0], functioninfo):  # 函数调用判断
+                                                        if callfunction_info2[
+                                                            0] not in hardfunctionname:  # 非硬件差异函数内调用的非硬件差异函数
+                                                            callnormalfunctionname.append(str(i + 1))
+                                                            callnormalfunctionname.append("NF:" + callfunction_info2[
+                                                                0] + ";SF:" + os.path.basename(functioninfo.get(
+                                                                callfunction_info2[0])) + ";" + projectname)
+                                                            callnormalfunctionpath.append(str(i + 1))
+                                                            callnormalfunctionpath.append(
+                                                                functioninfo.get(callfunction_info2[0]))
+                                                        else:  # 非硬件差异函数内调用的硬件差异函数
+                                                            callhardfunctionname.append(str(i + 1))
+                                                            callhardfunctionname.append("HF:" + callfunction_info2[
+                                                                0] + ";SF:" + os.path.basename(functioninfo.get(
+                                                                callfunction_info2[0])) + ";" + projectname)
+                                                            callhardfunctionpath.append(str(i + 1))
+                                                            callhardfunctionpath.append(
+                                                                functioninfo.get(callfunction_info2[0]))
+                                                    temp_statement2 = temp_statement2[temp_statement2.index("(") + 1:]
+                                                    callfunction_info2 = pattern2.findall(temp_statement2)
+                                            #   当前检索的硬件差异函数内，pathstatement内使用的宏定义的提取
+                                            for temp_macrodef in macrodef_name:
+                                                if temp_macrodef in temp_statement:
+                                                    usemacrodefname.append(str(i + 1))
+                                                    usemacrodefname.append(temp_macrodef)
+                                            #   当前检索的硬件差异函数内，pathstatement内使用的全局变量的提取
+                                            for temp_useglobalvar in useglobalvarname:
+                                                if temp_useglobalvar in temp_statement:
+                                                    useglobalvarname.append(str(i + 1))
+                                                    useglobalvarname.append(temp_useglobalvar)
+                                        savefile.write("kgdata =defaultdict(list)" + '\n'
+                                                       + "kgdata[\"hardfunction\"] =\"" + functionjudge + '\"' + '\n'
+                                                       + "kgdata[\"softwarename\"] =\"" + projectname + '\"' + '\n'
+                                                       + "kgdata[\"softwarepath\"] =\"" + projectpath + '\"' + '\n'
+                                                       + "kgdata[\"sourcename\"] =\"" + sourcename + '\"' + '\n'
+                                                       + "kgdata[\"sourcepath\"] =\"" + sourcepath + '\"' + '\n'
+                                                       + "kgdata[\"functionname\"] =\"" + functionname + '\"' + '\n'
+                                                       + "kgdata[\"pathstatement\"] =" + str(pathstatement) + '\n'
+                                                       + "kgdata[\"relationship\"] =" + str(relationship) + '\n'
+                                                       + "kgdata[\"callnormalfunctionname\"] =" + str(
+                                            callnormalfunctionname) + '\n'
+                                                       + "kgdata[\"callnormalfunctionpath\"] =" + str(
+                                            callnormalfunctionpath) + '\n'
+                                                       + "kgdata[\"callhardfunctionname\"] =" + str(
+                                            callhardfunctionname) + '\n'
+                                                       + "kgdata[\"callhardfunctionpath\"] =" + str(
+                                            callhardfunctionpath) + '\n'
+                                                       + "kgdata[\"usemacrodefname\"] =" + str(
+                                            usemacrodefname) + '\n'
+                                                       + "kgdata[\"useglobalvarname\"] =" + str(
+                                            useglobalvarname) + '\n\n')
+                                        usemacrodefname.clear()
+                                        useglobalvarname.clear()
+                                        #   对不含return的块进行处理
+                                        for numbers in itertools.product([0, 1], repeat=inter.__len__()):
+                                            temp_pathstatement = list(pathstatement)
+                                            temp_relationship = list(relationship)
+                                            if 1 not in numbers:
+                                                pass
+                                            else:
+                                                for index, i_2 in enumerate(numbers):
+                                                    if i_2 == 1:
+                                                        temp_single_pathstatement = temp_pathstatement[no_return_list_dict[str(inter[index])[str(inter[index]).index("[") + 1:str(inter[index]).index("]")].replace(' ', "")]]
+                                                        while temp_single_pathstatement[:3] == "IF:" or temp_single_pathstatement[:3] == "TB:" or temp_single_pathstatement[:3] == "FB:":
+                                                            block_info = block_info + temp_single_pathstatement[:3]
+                                                            temp_single_pathstatement = temp_single_pathstatement[3:]
+                                                        del temp_pathstatement[no_return_list_dict[str(inter[index])[str(inter[index]).index("[") + 1:str(inter[index]).index("]")].replace(' ', "")]]
+                                                        for temp_i in range(path_dict[int_to_str(inter[index])].split("@").__len__()):
+                                                            if temp_i == path_dict[int_to_str(inter[index])].split("@").__len__() - 1:
+                                                                block_info = block_info[:-3]
+                                                                block_info = block_info + "IF:"
+                                                            else:
+                                                                block_info = block_info[:-3]
+                                                                block_info = block_info + "TB:"
+                                                            temp_pathstatement.insert(no_return_list_dict[str(inter[index])[str(inter[index]).index("[") + 1:str(inter[index]).index("]")].replace(' ', "")],
+                                                                                      block_info + path_dict[int_to_str(inter[index])].split("@")[path_dict[int_to_str(inter[index])].split("@").__len__() - temp_i - 1])
+                                                            if temp_i == 0:
+                                                                pass
+                                                            elif temp_i == path_dict[int_to_str(inter[index])].split("@").__len__() - 1:
+                                                                temp_relationship.insert(no_return_list_dict[str(inter[index])[str(inter[index]).index("[") + 1:str(inter[index]).index("]")].replace(' ', "")],
+                                                                                         "true")
+                                                            else:
+                                                                temp_relationship.insert(no_return_list_dict[
+                                                                                             str(inter[index])[
+                                                                                             str(inter[index]).index(
+                                                                                                 "[") + 1:str(
+                                                                                                 inter[index]).index(
+                                                                                                 "]")].replace(' ',
+                                                                                                               "")],
+                                                                                         "control")
+                                                block_info = ""
+                                                print(temp_pathstatement)
+                                                for i, temp_statement in enumerate(temp_pathstatement):
+                                                    #   非硬件函数以及硬件函数调用信息的提取
+                                                    callfunction_info2 = pattern2.findall(temp_statement)
+                                                    if callfunction_info2.__len__() != 0:
+                                                        temp_statement2 = temp_statement
+                                                        while "(" in temp_statement2 and callfunction_info2.__len__() > 0:
+                                                            if functionincall(callfunction_info2[0],
+                                                                              functioninfo):  # 函数调用判断
+                                                                if callfunction_info2[
+                                                                    0] not in hardfunctionname:  # 非硬件差异函数内调用的非硬件差异函数
+                                                                    callnormalfunctionname.append(str(i + 1))
+                                                                    callnormalfunctionname.append(
+                                                                        "NF:" + callfunction_info2[
+                                                                            0] + ";SF:" + os.path.basename(
+                                                                            functioninfo.get(callfunction_info2[
+                                                                                                 0])) + ";" + projectname)
+                                                                    callnormalfunctionpath.append(str(i + 1))
+                                                                    callnormalfunctionpath.append(
+                                                                        functioninfo.get(callfunction_info2[0]))
+                                                                else:  # 非硬件差异函数内调用的硬件差异函数
+                                                                    callhardfunctionname.append(str(i + 1))
+                                                                    callhardfunctionname.append(
+                                                                        "HF:" + callfunction_info2[
+                                                                            0] + ";SF:" + os.path.basename(
+                                                                            functioninfo.get(callfunction_info2[
+                                                                                                 0])) + ";" + projectname)
+                                                                    callhardfunctionpath.append(str(i + 1))
+                                                                    callhardfunctionpath.append(
+                                                                        functioninfo.get(callfunction_info2[0]))
+                                                            temp_statement2 = temp_statement2[
+                                                                              temp_statement2.index("(") + 1:]
+                                                            callfunction_info2 = pattern2.findall(temp_statement2)
+                                                    #   当前检索的硬件差异函数内，pathstatement内使用的宏定义的提取
+                                                    for temp_macrodef in macrodef_name:
+                                                        if temp_macrodef in temp_statement:
+                                                            usemacrodefname.append(str(i + 1))
+                                                            usemacrodefname.append(temp_macrodef)
+                                                    #   当前检索的硬件差异函数内，pathstatement内使用的全局变量的提取
+                                                    for temp_useglobalvar in globalvar_name:
+                                                        if temp_useglobalvar in temp_statement:
+                                                            useglobalvarname.append(str(i + 1))
+                                                            useglobalvarname.append(temp_useglobalvar)
+                                                savefile.write("kgdata =defaultdict(list)" + '\n'
+                                                               + "kgdata[\"hardfunction\"] =\"" + functionjudge + '\"' + '\n'
+                                                               + "kgdata[\"softwarename\"] =\"" + projectname + '\"' + '\n'
+                                                               + "kgdata[\"softwarepath\"] =\"" + projectpath + '\"' + '\n'
+                                                               + "kgdata[\"sourcename\"] =\"" + sourcename + '\"' + '\n'
+                                                               + "kgdata[\"sourcepath\"] =\"" + sourcepath + '\"' + '\n'
+                                                               + "kgdata[\"functionname\"] =\"" + functionname + '\"' + '\n'
+                                                               + "kgdata[\"pathstatement\"] =" + str(
+                                                    temp_pathstatement) + '\n'
+                                                               + "kgdata[\"relationship\"] =" + str(temp_relationship) + '\n'
+                                                               + "kgdata[\"callnormalfunctionname\"] =" + str(
+                                                    callnormalfunctionname) + '\n'
+                                                               + "kgdata[\"callnormalfunctionpath\"] =" + str(
+                                                    callnormalfunctionpath) + '\n'
+                                                               + "kgdata[\"callhardfunctionname\"] =" + str(
+                                                    callhardfunctionname) + '\n'
+                                                               + "kgdata[\"callhardfunctionpath\"] =" + str(
+                                                    callhardfunctionpath) + '\n'
+                                                               + "kgdata[\"usemacrodefname\"] =" + str(
+                                                    usemacrodefname) + '\n'
+                                                               + "kgdata[\"useglobalvarname\"] =" + str(
+                                                    useglobalvarname) + '\n\n')
+                                        callnormalfunctionname.clear()
+                                        callnormalfunctionpath.clear()
+                                        callhardfunctionname.clear()
+                                        callhardfunctionpath.clear()
+                                        usemacrodefname.clear()
+                                        useglobalvarname.clear()
+                                        relationship.clear()
+                                        pathstatement = []
+                        if "{" in content:
+                            content = content.replace('{', '')
+                            path_i[floorblock_level[0]] += 1
+                    else:
+                        if path_i[floorblock_level[0]] == 0:
+                            path_i = path_i[:-1]
+                            floorblock_level = floorblock_level[:-1]
+                            floorblock_level[0] -= 1
+                if floorblock_level.__len__() > 1:
+                    if str(floorblock_level)[
+                       str(floorblock_level).index("[") + 1:str(floorblock_level).index("]")].replace(' ',
+                                                                                                      "") not in path_dict.keys():
+                        if basepath != "":
+                            path_dict[str(floorblock_level)[
+                                      str(floorblock_level).index("[") + 1:str(floorblock_level).index("]")].replace(
+                                ' ', "")] = basepath + "@" + content.strip()
+                            basepath = ""
+                        else:
+                            path_dict[str(floorblock_level)[
+                                      str(floorblock_level).index("[") + 1:str(floorblock_level).index("]")].replace(
+                                ' ', "")] = content.strip()
+                        for temp_key in path_dict.keys():
+                            temp_key_list = temp_key.split(",")
+                            if content.strip() not in path_dict[
+                                temp_key] and floorblock_level.__len__() > temp_key_list.__len__():
+                                temp_index = 1
+                                judge_i = 0
+                                while temp_index < temp_key_list.__len__():
+                                    if temp_key_list[temp_index] == str(floorblock_level[temp_index]):
+                                        judge_i += 1
+                                    temp_index += 1
+                                if judge_i == temp_key_list.__len__() - 1:
+                                    path_dict[temp_key] = path_dict[temp_key] + "@" + content.strip()
+                    else:
+                        for temp_key in path_dict.keys():
+                            temp_key_list = temp_key.split(",")
+                            if temp_key_list == list(map(str, floorblock_level)):
+                                path_dict[temp_key] = path_dict[temp_key] + "@" + content.strip()
+                            elif floorblock_level.__len__() > temp_key_list.__len__():
+                                temp_index = 1
+                                judge_i = 0
+                                while temp_index < temp_key_list.__len__():
+                                    if temp_key_list[temp_index] == str(floorblock_level[temp_index]):
+                                        judge_i += 1
+                                    temp_index += 1
+                                if judge_i == temp_key_list.__len__() - 1:
+                                    path_dict[temp_key] = path_dict[temp_key] + "@" + content.strip()
+    savefile.close()
+    time_end = time.time()  # 结束计时
+    time_c = time_end - time_start  # 运行所花时间
+    print('time cost', time_c, 's')
+
+
+# 分支号int->str
+def int_to_str(int_list):
+    str_list = str(int_list)
+    str_list = str_list[str_list.index("[") + 1:str_list.index("]")].replace(' ', "")
+    return str_list
+
+
+# 按分支号划分路径
+def difffunction_path(pathnumber_list, path_list, floornumber_list, path_dict, temp_path_list, no_return_list):
+    while floornumber_list in pathnumber_list:
+        if temp_path_list:
+            if floornumber_list.__len__() < temp_path_list[-1].__len__():
+                #   存放嵌套外有return的情况
+                temp_list = list(temp_path_list[-1])  # TODO: 命名
+                temp_list2 = list(temp_path_list[-1])
+                del temp_list[-1]
+                temp_list[0] -= 1
+                temp_path_list2 = list(path_dict[int_to_str(temp_list)].split("@"))
+                while temp_list2 in pathnumber_list:
+                    temp_path_list2 = set(temp_path_list2).difference(set(path_dict[int_to_str(temp_list2)].split("@")))
+                    temp_list2[-1] -= 1
+                for temp_i in temp_path_list2:
+                    if "return " in temp_i:
+                        temp_path_list.append(list(temp_list))
+                        path_list.append(list(temp_path_list))
+                        del temp_path_list[-1]
+                #
+                if ("if(" in path_dict[int_to_str(floornumber_list)].split("@")[0] or "if (" in
+                    path_dict[int_to_str(floornumber_list)].split("@")[0]) and "else" not in \
+                        path_dict[int_to_str(floornumber_list)].split("@")[0]:
+                    pass
+                else:
+                    while temp_path_list[-1].__len__() > floornumber_list.__len__():
+                        del temp_path_list[-1]
+        temp_int_list = list(floornumber_list)
+        temp_int_list[0] += 1
+        temp_int_list.append(1)
+        if temp_int_list in pathnumber_list:
+            temp_path_list.append(list(floornumber_list))
+            difffunction_path(pathnumber_list, path_list, temp_int_list, path_dict, temp_path_list, no_return_list)
+        elif "return " in path_dict[int_to_str(floornumber_list)]:
+            temp_path_list.append(list(floornumber_list))
+            path_list.append(list(temp_path_list))
+        elif "return " not in path_dict[int_to_str(floornumber_list)]:
+            temp_path_list.append(list(floornumber_list))
+            no_return_list.append(list(floornumber_list))
+
+        floornumber_list[-1] += 1
+
+
+# 判断函数是否调用
+def functionincall(callfunctionname, functioninfo):
+    for key in functioninfo.keys():  # 遍历字典中所有key值，若当前函数名存在于字典中，则返回True
+        if key == callfunctionname:
+            return True
+    return False
+
+
+# 读取所有硬件差异函数名并存放
+def hardfunctionsearch(hardfunctionname):
+    hardfunctionname.append("hard_diff_func_1")
+    hardfunctionname.append("hard_diff_func_2")
+    hardfunctionname.append("hard_diff_func_3")
+    hardfunctionname.append("hard_diff_func_4")
+    hardfunctionname.append("hard_diff_func_5")
+
+
+# 读取目标工程文件夹下（包括子目录下）所有.c文件，并获取其路径
+def readfiles(path, bodylistname, headlistname):
+    for file in os.listdir(path):
+        file_path = os.path.join(path, file)
+        if os.path.isdir(file_path):  # 若路径下存在子目录，则继续使用递归继续读取
+            readfiles(file_path, bodylistname, headlistname)
+        elif os.path.splitext(file_path)[1] == '.c':  # 根据文件扩展名判断并获取.c文件
+            bodylistname.append(file_path)  # 存放符合要求文件的路径
+        elif os.path.splitext(file_path)[1] == '.h':
+            headlistname.append(file_path)  # 存放符合要求文件的路径
+
+
+# 读取工程下所有自定义数据类型
+def returntypesearch(listname, returntypelist):
+    index = 0  # 判断是否为结构体类型 0:不是 1:是
+    i = 0  # # 记录当前结构体中的"{}"是否成对
+    returntypelist.append("VOID")
+    returntypelist.append("void")
+    returntypelist.append("char")
+    returntypelist.append("short")
+    returntypelist.append("int")
+    returntypelist.append("float")
+    returntypelist.append("long")
+    returntypelist.append("double")
+    returntypelist.append("bool")
+    returntypelist.append("UINT32")
+    returntypelist.append("uint32_t")
+    pattern1 = re.compile(r"typedef\s(struct).*\s(\w+)?")
+    pattern2 = re.compile(r"typedef.*\s(\w+)")
+    for pyFilePath in listname:
+        contents = read(pyFilePath)
+        for content in contents:
+            if "/*" in content:
+                content = content[:content.index("/*")]
+            if "//" in content:
+                content = content[:content.index("//")]
+            if "{" in content:
+                i += 1
+            if "}" in content:
+                i -= 1
+            if i == 0 and index == 1:
+                returntypelist.append(content[content.index("}") + 1:content.index(";")])
+                index = 0
+            returntype_info = pattern1.findall(content)
+            if returntype_info.__len__() > 0:
+                index = 1
+            else:
+                returntype_info = pattern2.findall(content)
+                if returntype_info.__len__() > 0:
+                    returntypelist.append(returntype_info[0])
+
+
+# 读取工程下所有函数定义行并保存函数名和所在文件路径
+def functionsearch(listname, functioninfo, returntypelist):
+    pattern = re.compile(r"(\w+)\s(\*?)(\w+)\s*\(.*\)")
+    for pyFilePath in listname:
+        i = 0
+        contents = read(pyFilePath)
+        for content in contents:
+            if "/*" in content:
+                content = content[:content.index("/*")]
+            function_info = pattern.findall(content)
+            if function_info.__len__() > 0 and i == 0:
+                if function_info[0][0] in returntypelist:
+                    functioninfo[function_info[0][2]] = pyFilePath  # 以键值对的形式存放函数名以及其所在文件路径
+            if "{" in content:
+                i += 1
+            if "}" in content:
+                i -= 1
+
+
+#   全局变量以及宏定义使用判断
+def macrodef_globalvar_search(macrodef_name, globalvar_name):
+    macrodef_name.append("VOS_FALSE0")
+    macrodef_name.append("VOS_TRUE0")
+    macrodef_name.append("VOS_FALSE1")
+    macrodef_name.append("VOS_FALSE2")
+    macrodef_name.append("VOS_FALSE3")
+    macrodef_name.append("VOS_TRUE1")
+    macrodef_name.append("VOS_TRUE2")
+    macrodef_name.append("VOS_TRUE2_2")
+    macrodef_name.append("VOS_TRUE3")
+    macrodef_name.append("VOS_TRUE4")
+    globalvar_name.append("tm_info")
+
+
+# 扫描源文件
+def read(filepath):
+    readfile = open(filepath, "r", encoding='utf-8')  # 从filePath文件中获取指定文件的路径
+    contents = readfile.readlines()  # 扫描文件中的所有内容并以列表的形式存储
+    readfile.close()
+    return contents
+
+
+if __name__ == '__main__':
+    main()
